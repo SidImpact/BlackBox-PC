@@ -1,0 +1,66 @@
+# 🖥️ BlackBox PC (v5.0) — Your Local Digital Time Machine (Rewind Every Action)
+
+BlackBox PC is a lightweight, secure, and completely local background utility that tracks your digital history as you work. It captures high-efficiency visual bookmarks of your active windows on specific interactions (clicks or key presses) and lets you surgically search through your workday timeline whenever you need to backtrack.
+
+---
+
+## 🔒 Privacy First by Design
+* **100% Local:** Your screenshots, window text, and logs never touch the cloud or any external server. Everything stays on your local drive.
+* **Self-Cleaning:** Built-in automated retention filters ensure your storage limits are perfectly respected according to your preferences.
+
+---
+
+## 📦 What's Inside the Folder
+1. **`Start_BlackBox_Pc.exe`** — The intuitive background engine that captures snapshots based on active user context.
+2. **`viewer.exe`** — Your visual timeline dashboard featuring the dynamic history slider and live search bar.
+3. **`enable_startup.py`** — An optional setup script to easily toggle auto-launch capabilities.
+
+---
+
+## 🚀 Getting Started
+
+### 1. Launching the Background Engine
+* Double-click **`Start_BlackBox_Pc.exe`**.
+* **Where did it go?** The app runs completely invisibly in the background to save screen space. Look down at the bottom right corner of your monitor next to your Windows clock (inside the system tray `^` overflow menu). 
+* Look for a **bright neon red square icon**.
+
+### 2. Using the System Tray Menu
+Right-click the **neon red square icon** to reveal quick controls:
+* **🟢 Running / 🟡 Paused:** Displays your live tracking state.
+* **Pause / Resume Recording:** Quickly pause tracking if you are entering private information or handling passwords.
+* **📂 Open History Viewer:** Instantly launches your timeline dashboard.
+* **❌ Exit BlackBox:** Completely shuts down the tracking engine.
+
+---
+
+## 🔍 How to Use the Visual History Dashboard (`viewer.exe`)
+
+Launch **`viewer.exe`** from the folder or via the system tray icon to pull up your visual archive.
+
+### 🎛️ The Live Omni-Search Bar
+At the top of the viewer, use the search input to instantly filter through thousands of logged frames as you type:
+* **Search by App Name:** Type `vlc`, `discord`, `photoshop`, or `chrome` to view only the frames where that window was in focus.
+* **Search by Action:** Type `Enter`, `Tab`, `Esc`, or `MouseClick` to find specific interaction points.
+* **Search by Date or Time:** Type a date format like `2026-06-21` or a specific hour block like `15:30` to jump right to that historical moment.
+
+### 🧼 Managing Storage
+At the bottom of the dashboard, use the drop-down menu to choose how long you want to keep your data (`1 Day`, `2 Days`, `5 Days`, `10 Days`, or `Never`). The storage manager cleans old data automatically on startup!
+
+---
+
+## 🤖 Optional: Auto-Boot on Windows Startup
+
+If you want BlackBox PC to automatically start tracking the moment you log into your computer:
+1. Make sure Python is installed on your system.
+2. Double-click or run **`enable_startup.py`** from your terminal.
+3. You will see a success message confirming that a native Windows shortcut has been safely placed in your system startup directory.
+4. To disable this in the future, simply open your **Windows Task Manager (Ctrl + Shift + Esc)**, navigate to the **Startup Apps** tab, right-click `BlackBox_AutoLaunch`, and select **Disable**.
+
+---
+
+## 🛠️ Troubleshooting & Support
+* **Missing Images?** If the timeline shows an entry but the image says missing, the automated storage manager may have cleared it based on your selected data expiration timeframe.
+* **App Won't Open?** Ensure you are running both executables from within the same unzipped folder so they can properly connect to the same backend database file (`blackbox_v5.db`).
+
+---
+*Built securely for productivity minds. Enjoy your local digital time machine!*
