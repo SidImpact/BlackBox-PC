@@ -7,8 +7,20 @@ import ctypes
 import subprocess  # NEW: Used to open the viewer window independently
 from datetime import datetime, timedelta  
 from pynput import mouse, keyboard
-from PIL import Image, ImageDraw  # UPGRADED: Added Image to generate a tray icon
+from PIL import Image, ImageDraw, ImageGrab  # UPGRADED: Added ImageGrab for multi-monitor capture
 import pystray  # NEW: Handles the Windows System Tray interface
+import asyncio  # NEW: Handles asynchronous OCR operations
+import sys  # NEW: Handles encoding protection
+
+def safe_print(msg):
+    try:
+        enc = sys.stdout.encoding or 'utf-8'
+        print(msg.encode(enc, errors='replace').decode(enc))
+    except:
+        try:
+            print(msg.encode('ascii', errors='replace').decode('ascii'))
+        except:
+            pass
 
 # CONFIGURATION
 log_folder = "BlackBox_Logs"
@@ -20,6 +32,11 @@ is_paused = False
 icon_instance = None
 mouse_listener = None
 keyboard_listener = None
+
+# Throttling configuration
+last_capture_time = 0
+last_captured_app = ""
+MIN_CAPTURE_INTERVAL = 2.0  # seconds cooldown
 
 if not os.path.exists(log_folder):
     os.makedirs(log_folder)
@@ -43,6 +60,14 @@ def setup_database():
         )
     ''')
     cursor.execute("INSERT OR IGNORE INTO Settings (key, value) VALUES ('retention', 'Never')")
+    cursor.execute("INSERT OR IGNORE INTO Settings (key, value) VALUES ('blacklist', '1Password, Bitwarden, Incognito, Online Banking')")
+    
+    # Dynamically check if ocr_text column exists
+    cursor.execute("PRAGMA table_info(ActionLogs)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'ocr_text' not in columns:
+        cursor.execute("ALTER TABLE ActionLogs ADD COLUMN ocr_text TEXT")
+        
     conn.commit()
     conn.close()
 
@@ -54,7 +79,7 @@ def run_storage_cleanup():
     retention = result[0] if result else "Never"
     
     if retention == "Never":
-        print("🧹 Storage Manager: Retention set to 'Never'. History preserved.")
+        safe_print("🧹 Storage Manager: Retention set to 'Never'. History preserved.")
         conn.close()
         return
 
@@ -76,7 +101,7 @@ def run_storage_cleanup():
                     pass
         cursor.execute("DELETE FROM ActionLogs WHERE timestamp < ?", (cutoff_str,))
         conn.commit()
-        print(f"🧹 Storage Manager: Cleaned {deleted_count} old frames.")
+        safe_print(f"🧹 Storage Manager: Cleaned {deleted_count} old frames.")
     conn.close()
 
 # Initialize DB and clean storage
@@ -95,21 +120,101 @@ def get_active_window_title():
     except:
         return "Unknown Application"
 
+def get_blacklist():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM Settings WHERE key = 'blacklist'")
+        res = cursor.fetchone()
+        conn.close()
+        if res:
+            return [word.strip().lower() for word in res[0].split(",") if word.strip()]
+    except:
+        pass
+    return ["1password", "bitwarden", "incognito", "online banking"]
+
+def run_ocr_in_background(filepath, log_id):
+    async def process():
+        try:
+            import winrt.windows.storage as wstorage
+            import winrt.windows.media.ocr as wocr
+            import winrt.windows.graphics.imaging as wimaging
+            
+            abs_path = os.path.abspath(filepath)
+            if not os.path.exists(abs_path):
+                return
+                
+            file = await wstorage.StorageFile.get_file_from_path_async(abs_path)
+            stream = await file.open_async(wstorage.FileAccessMode.READ)
+            decoder = await wimaging.BitmapDecoder.create_async(stream)
+            bitmap = await decoder.get_software_bitmap_async()
+            
+            engine = wocr.OcrEngine.try_create_from_user_profile_languages()
+            if not engine:
+                available = wocr.OcrEngine.get_available_recognizer_languages()
+                if available:
+                    engine = wocr.OcrEngine.try_create_from_language(available[0])
+            
+            if engine:
+                result = await engine.recognize_async(bitmap)
+                ocr_text = result.text
+                
+                # Save back to SQLite
+                conn = sqlite3.connect(DB_NAME)
+                cursor = conn.cursor()
+                cursor.execute("UPDATE ActionLogs SET ocr_text = ? WHERE id = ?", (ocr_text, log_id))
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            safe_print(f"Background OCR Error: {e}")
+            
+    asyncio.run(process())
+
 def capture_screen_in_background(trigger_reason, mouse_pos, app_name):
+    global last_capture_time, last_captured_app
+    
     if is_paused:  # NEW: Drop frames immediately if user has paused recording
+        return
+        
+    # 1. Privacy Blacklist Filter
+    blacklist = get_blacklist()
+    app_lower = app_name.lower()
+    for keyword in blacklist:
+        if keyword in app_lower:
+            safe_print(f"Auto-paused logging: '{app_name}' matches blacklist keyword '{keyword}'")
+            return
+            
+    # 2. Intelligent Throttling
+    current_time = time.time()
+    if app_name == last_captured_app and (current_time - last_capture_time < MIN_CAPTURE_INTERVAL):
         return
         
     if not capture_lock.acquire(blocking=False):
         return 
         
     try:
+        last_capture_time = current_time
+        last_captured_app = app_name
+        
         timestamp = time.strftime("%Y%m%d_%H%M%S") + f"_{int(time.time() * 1000) % 1000:03d}"
         filepath = f"{log_folder}/{timestamp}_{trigger_reason}.jpg" 
         
-        img = pyautogui.screenshot()
+        # 3. Multi-Monitor Capture
+        img = ImageGrab.grab(all_screens=True)
         img = img.convert("RGB")
         
+        # 4. Multi-Monitor virtual screen offset cursor drawing
         mx, my = mouse_pos
+        try:
+            left_offset = ctypes.windll.user32.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+            top_offset = ctypes.windll.user32.GetSystemMetrics(77)   # SM_YVIRTUALSCREEN
+        except:
+            left_offset = 0
+            top_offset = 0
+            
+        mx = mx - left_offset
+        my = my - top_offset
+        
         cursor_points = [
             (mx, my), 
             (mx + (10 * CURSOR_SCALE), my + (15 * CURSOR_SCALE)), 
@@ -128,10 +233,15 @@ def capture_screen_in_background(trigger_reason, mouse_pos, app_name):
             INSERT INTO ActionLogs (timestamp, trigger_reason, file_path, app_name) 
             VALUES (?, ?, ?, ?)
         ''', (timestamp, trigger_reason, filepath, app_name))
+        log_id = cursor.lastrowid
         conn.commit()
         conn.close()
         
-        print(f"Logged: [{app_name}] via {trigger_reason}")
+        safe_print(f"Logged: [{app_name}] via {trigger_reason}")
+        
+        # 5. Launch Background WinRT OCR Thread
+        ocr_worker = threading.Thread(target=run_ocr_in_background, args=(filepath, log_id))
+        ocr_worker.start()
     finally:
         capture_lock.release()
 
@@ -155,11 +265,18 @@ def on_press(key):
 # --- NEW: SYSTEM TRAY INTEGRATION LOGIC ---
 
 def generate_tray_icon():
-    """Generates a high-visibility, bright neon red icon for the system tray."""
-    # Changed size to 32x32 (standard Windows tray size) and color to bright red!
+    """Generates the system tray icon, loading the professional logo if available."""
+    try:
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(project_dir, "logo.jpg")
+        if os.path.exists(logo_path):
+            return Image.open(logo_path).resize((32, 32))
+    except:
+        pass
+    
+    # Fallback high-visibility bright neon red icon
     image = Image.new('RGB', (32, 32), color=(255, 0, 50))
     draw = ImageDraw.Draw(image)
-    # Draw a small inner dark square for contrast
     draw.rectangle([8, 8, 24, 24], fill=(20, 20, 20))
     return image
 
@@ -207,7 +324,7 @@ def start_tray():
     icon_instance = pystray.Icon("BlackBoxPC", generate_tray_icon(), "BlackBox PC")
     update_tray_menu(icon_instance)
     
-    print("BlackBox PC V5.3 (Stealth Mode) successfully active in System Tray.")
+    safe_print("BlackBox PC V5.3 (Stealth Mode) successfully active in System Tray.")
     icon_instance.run()
 
 if __name__ == "__main__":
